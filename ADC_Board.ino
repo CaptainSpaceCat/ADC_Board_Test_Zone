@@ -26,13 +26,13 @@ const float LSBsize = FSR/pow(2,24);
 bool showHex = true;
 /*------------------------------------------------*/
 /*------------------------------------------------*/
-
+bool active = false;
 
 
 
 
 void setup() {
-  Serial.begin(115200);
+  Serial.begin(115200);//115200
   delay(3);
   //pinMode(RX_LED, OUTPUT);
   //pinMode(TX_LED, OUTPUT);
@@ -72,15 +72,15 @@ void setup() {
   digitalWrite(chipSelectPin, HIGH);
   delay(3000);
   
-  startADC();
-  delay(100);
+  //startADC();
+  //delay(100);
 
   /*Read all the register values*/ 
 //  delay(500);
 //  SFOCAL();
 //  delay(2000);
-  regReadout();
-  delay(10);
+  //regReadout();
+  //delay(10);
 
 
 
@@ -107,27 +107,63 @@ void loop() {
     if (Serial.available() > 0) {
       handleCommand();
     }
-    
-    readData1(showHex = false, 1000);
-    delay(10);    
+
+    if (active) {
+      readData1(showHex = false, 1000);
+    }
+    delay(75);
   }
 }
 /*------------------------------------------------*/
 
 
 void handleCommand() {
-  String command = "";
+  String message = "";
   while (Serial.available() > 0) {
     byte inByte = Serial.read();
-    command += (char)inByte;
+    message += (char)inByte;
   }
-  command = command.substring(0, command.length() - 2);
-  Serial.println(command);
+  message = message.substring(0, message.length() - 2);
+  //Serial.println(message);
+  String argv[6];
+  parseMessage(message, argv);
 
-  if (command == "test") {
-    Serial.println("Recieved");
-    delay(2000);
+  if (argv[0] == "test") {
+    //Serial.println("Recieved");
+    delay(3000);
+  } else if (argv[0] == "stop") {
+    stopADC();
+  } else if (argv[0] == "start") {
+    startADC();
+  } else if (argv[0] == "reset") {
+    resetADC();
+  } else if (argv[0] == "readout") {
+    regReadout();
+    delay(5000);
+  } else if (argv[0] == "setinputpins") {
+    setInputMUX(argv[1].toInt(), argv[2].toInt());
+  } else if (argv[0] == "setdatarate") {
+    setDataRate(argv[1].toInt());
+  } else if (argv[0] == "setgain") {
+    setGain(argv[1].toInt());
   }
+}
+
+void parseMessage(String msg, String arg[]) {
+  int index = 0;
+
+  int wordIndex = 0;
+  int wordStart = 0;
+  while (index < msg.length()) {
+    if (msg.charAt(index) == ' ') {
+      arg[wordIndex] = msg.substring(wordStart, index);
+      //Serial.println(arg[wordIndex]);
+      wordStart = index + 1;
+      wordIndex++;
+    }
+    index++;
+  }
+  arg[wordIndex] = msg.substring(wordStart, index);
 }
 
 
@@ -136,9 +172,78 @@ void handleCommand() {
 
 
 
+
+
+
+void setDataRate(int sps) {
+  byte val = 0x0;
+  
+  if (sps == 60) {
+    val = 0x16;
+  } else if (sps == 100) {
+    val = 0x17;
+  } else if (sps == 200) {
+    val = 0x18;
+  } else if (sps == 400) {
+    val = 0x19;
+  } else if (sps == 800) {
+    val = 0x1a;
+  } else if (sps == 1000) {
+    val = 0x1b;
+  } else if (sps == 2000) {
+    val = 0x1c;
+  } else if (sps == 4000) {
+    val = 0x1d;
+  }
+
+  val |= 16;
+  writeReg(0x44, val);
+  //regReadout();
+}
+
+void setGain(int g) {
+  byte val = 0x0;
+  switch (g) {
+    case 1:
+      val = 0x0;
+      break;
+    case 2:
+      val = 0x1;
+      break;
+    case 4:
+      val = 0x2;
+      break;
+    case 8:
+      val = 0x3;
+      break;
+    case 16:
+      val = 0x4;
+      break;
+    case 32:
+      val = 0x5;
+      break;
+    case 64:
+      val = 0x6;
+      break;
+    case 128:
+      val = 0x7;
+      break;
+  }
+
+  val |= 8;
+  writeReg(0x43, val);
+}
+
+void setInputMUX(int AINx, int AINy) {
+  byte val;
+  val |= AINy;
+  val |= (AINx << 4);
+  writeReg(0x42, val);
+}
+
 /*Start ADC with command + SYNC pin --- WORKING ---*/
 void startADC() {
-  Serial.println("---Starting ADC---");
+  //Serial.println("---Starting ADC---");
   digitalWrite(chipSelectPin, LOW);
   SPI.transfer(0x08); //send start byte
   digitalWrite(startSync, LOW);
@@ -146,16 +251,18 @@ void startADC() {
   digitalWrite(startSync, HIGH);
   delay(20);
   digitalWrite(chipSelectPin, HIGH);
+  active = true;
 }
 
 /*Stop ADC with command + SYNC pin --- UNKNOWN ---*/
 void stopADC() {
-  Serial.println("---Stopping ADC---");
+  //Serial.println("---Stopping ADC---");
   digitalWrite(chipSelectPin, LOW);
   SPI.transfer(0x0A); //send start byte
   digitalWrite(startSync, LOW);
   delay(20);
   digitalWrite(chipSelectPin, HIGH);
+  active = false;
 }
 
 /*Configure current excitation source --- WORKING ---*/
