@@ -16,6 +16,26 @@ ser.baudrate = 115200
 ser.port = 'COM14'
 ser.open()
 
+def new_output_file():
+	fileName = "data_out.txt";
+
+	try:
+		test_open = open(fileName, "r")
+		test_open.close()
+		index = 0
+		fileName = "data_out_0.txt"
+		while(True):
+			test_open = open(fileName, "r")
+			test_open.close()
+			index += 1
+			fileName = "data_out_" + str(index) + ".txt"
+	except:
+		pass
+
+	return open(fileName, "w")
+
+
+dataFile = new_output_file();
 
 #========================== ADC FUNCTIONS ==========================#
 def ADC_readout():
@@ -130,7 +150,9 @@ MAX_LIST_SIZE = 100
 
 def animate(i):
     if (ser.inWaiting() > 0):
-    	yList.append(float(ser.readline()))
+    	line = ser.readline()
+    	dataFile.write(line.decode("utf-8"))
+    	yList.append(float(line))
     	if (len(yList) > MAX_LIST_SIZE):
     		yList.pop(0)
 
