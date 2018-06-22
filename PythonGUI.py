@@ -7,35 +7,85 @@ import matplotlib.animation as animation
 from matplotlib import style
 import tkinter as tk
 from tkinter import ttk
+from tkinter import filedialog
 from tkinter import *
 
 import time
 
+import sys
+import glob
+
+
 ser = serial.Serial()
 ser.baudrate = 115200
-ser.port = 'COM14'
-ser.open()
 
-def new_output_file():
-	fileName = "data_out.txt";
+def serial_ports():
+    """ Lists serial port names
 
-	try:
-		test_open = open(fileName, "r")
-		test_open.close()
-		index = 0
-		fileName = "data_out_0.txt"
-		while(True):
-			test_open = open(fileName, "r")
-			test_open.close()
-			index += 1
-			fileName = "data_out_" + str(index) + ".txt"
-	except:
-		pass
+        :raises EnvironmentError:
+            On unsupported or unknown platforms
+        :returns:
+            A list of the serial ports available on the system
+    """
+    if sys.platform.startswith('win'):
+        ports = ['COM%s' % (i + 1) for i in range(256)]
+    elif sys.platform.startswith('linux') or sys.platform.startswith('cygwin'):
+        # this excludes your current terminal "/dev/tty"
+        ports = glob.glob('/dev/tty[A-Za-z]*')
+    elif sys.platform.startswith('darwin'):
+        ports = glob.glob('/dev/tty.*')
+    else:
+        raise EnvironmentError('Unsupported platform')
 
-	return open(fileName, "w")
+    result = []
+    for port in ports:
+        try:
+            s = serial.Serial(port)
+            s.close()
+            result.append(port)
+        except (OSError, serial.SerialException):
+            pass
+    return result
+
+def clear_data():
+	global yList, num_samples, dataFile
+	yList = []
+	num_samples = 0
+	dataFile.close()
+	dataFile = open("temp_data.txt", "w")
+	data_slider.config(from_=0, to=0)
 
 
-dataFile = new_output_file();
+dataFile = open("temp_data.txt", "w")
+
+def save_data():
+	path = filedialog.asksaveasfilename(filetypes=(("text files", "*.txt"),("all files","*.*")))
+	if (path != ""):
+		if (path[-4:] != ".txt"):
+			path += ".txt"
+		global dataFile
+		dataFile.close()
+		data_out = open(path, "w")
+		lines = [line.rstrip("\n") for line in open("temp_data.txt")]
+		for line in lines:
+			if line != "":
+				data_out.write(line + "\n")
+
+		dataFile = open("temp_data.txt", "a")
+
+def open_data():
+	path = filedialog.askopenfilename(filetypes=(("text files", "*.txt"),("all files","*.*")))
+	if (path != ""):
+		global saved_yList
+		saved_yList = []
+		if (ser.isOpen()):
+			ser.close()
+		lines = [line.rstrip('\n') for line in open(path)]
+		for line in lines:
+			if line != "":
+				saved_yList.append(float(line))
+		data_slider.config(from_=min(len(saved_yList), MAX_LIST_SIZE), to=len(saved_yList))
+		data_slider.set(min(len(saved_yList), MAX_LIST_SIZE))
 
 #========================== ADC FUNCTIONS ==========================#
 def ADC_readout():
@@ -45,21 +95,47 @@ def ADC_test():
     ser.write(b"test__")
 
 def ADC_stop():
+	dataFile.flush()
+
+	global saved_yList
+	saved_yList = []
+	lines = [line.rstrip('\n') for line in open("temp_data.txt")]
+	for line in lines:
+		if line != "":
+			saved_yList.append(float(line))
+
 	start_button.config(state=NORMAL)
 	stop_button.config(state=DISABLED)
+	save_button.config(state=NORMAL)
 	pos_dropdown.config(state=NORMAL)
 	neg_dropdown.config(state=NORMAL)
 	gain_dropdown.config(state=NORMAL)
 	data_dropdown.config(state=NORMAL)
-	ser.write(b"stop__")
+	port_dropdown.config(state=NORMAL)
+	open_button.config(state=NORMAL)
+	clear_button.config(state=NORMAL)
+	if (ser.isOpen()):
+		ser.write(b"stop__")
+		ser.close()
+		port_dropdown["menu"].delete(0, "end")
+		choices = serial_ports()
+		for c in choices:
+			port_dropdown["menu"].add_command(label=c, command=tk._setit(dVar_port, c))
 
 def ADC_start():
-	stop_button.config(state=NORMAL)
+	ser.port = dVar_port.get()
+	ser.open()
+
 	start_button.config(state=DISABLED)
+	stop_button.config(state=NORMAL)
+	save_button.config(state=DISABLED)
 	pos_dropdown.config(state=DISABLED)
 	neg_dropdown.config(state=DISABLED)
 	gain_dropdown.config(state=DISABLED)
 	data_dropdown.config(state=DISABLED)
+	port_dropdown.config(state=DISABLED)
+	open_button.config(state=DISABLED)
+	clear_button.config(state=DISABLED)
 	ADC_setpins(dVar_pos.get(), dVar_neg.get())
 	time.sleep(.1)
 	ADC_setgain(dVar_gain.get())
@@ -100,22 +176,31 @@ start_button.grid(row=1, column=5)
 stop_button = ttk.Button(root, text="Stop", command=ADC_stop, state=DISABLED)
 stop_button.grid(row=2, column=5)
 
+clear_button = ttk.Button(root, text="Clear Data", command=clear_data)
+clear_button.grid(row=3, column=5)
+
+open_button = ttk.Button(root, text="View Saved Data", command=open_data)
+open_button.grid(row=46, column=7)
+
+save_button = ttk.Button(root, text="Save All Data to File", command=save_data)
+save_button.grid(row=46, column=5, columnspan=2)
+
 root.grid_columnconfigure(6, minsize=60)
 
-dlabel = tk.Label(root, text="Input Pins", font=LARGE_FONT)
+dlabel = tk.Label(root, text="Input Pins   ", font=LARGE_FONT)
 dlabel.grid(row=0, column=7, columnspan=2, sticky=S)
 
 dVar_pos = StringVar(root)
 dVar_pos.set("8")
 pos_dropdown = OptionMenu(root, dVar_pos, "7", "8", "10", "11")
-pos_dropdown.grid(row=1, column=7, sticky=E)
+pos_dropdown.grid(row=1, column=7)
 poslabel = tk.Label(root, text="+", font=LARGE_FONT)
 poslabel.grid(row=2, column=7, sticky=N)
 
 dVar_neg = StringVar(root)
 dVar_neg.set("10")
 neg_dropdown = OptionMenu(root, dVar_neg, "7", "8", "10", "11")
-neg_dropdown.grid(row=1, column=8, sticky=E)
+neg_dropdown.grid(row=1, column=8)
 neglabel = tk.Label(root, text="GND", font=LARGE_FONT)
 neglabel.grid(row=2, column=8, sticky=N)
 
@@ -133,7 +218,16 @@ data_dropdown.grid(row=8, column=8, sticky=E)
 datalabel = tk.Label(root, text="Datarate", font=LARGE_FONT)
 datalabel.grid(row=7, column=8, sticky=S)
 
+port_options = serial_ports()
+dVar_port = StringVar(root)
+dVar_port.set(port_options[0])
+port_dropdown = OptionMenu(root, dVar_port, *port_options)
+port_dropdown.grid(row=11, column=8, sticky=E)
+portlabel = tk.Label(root, text="Port", font=LARGE_FONT)
+portlabel.grid(row=10, column=8, sticky=S)
 
+data_slider = Scale(root, from_=0, to=0, orient=HORIZONTAL)
+data_slider.grid(row=44, column=5, columnspan=4, sticky=W+E)
 
 #========================== ANIMATED PLOT ==========================#
 ADC_stop() #we don't want any data coming in before the settings are initialized
@@ -145,20 +239,37 @@ f = Figure(figsize=(5,5), dpi=100)
 a = f.add_subplot(111)
 
 yList = []
+saved_yList = []
 
 MAX_LIST_SIZE = 100
+num_samples = 0;
 
 def animate(i):
-    if (ser.inWaiting() > 0):
-    	line = ser.readline()
-    	dataFile.write(line.decode("utf-8"))
-    	yList.append(float(line))
-    	if (len(yList) > MAX_LIST_SIZE):
-    		yList.pop(0)
+	if not (ser.isOpen()):
+		xList = list(range(max(data_slider.get()-MAX_LIST_SIZE, 0), data_slider.get()))
+		a.clear()
+		view_yList = []
 
-    	xList = list(range(len(yList)))
-    	a.clear()
-    	a.plot(xList, yList)
+		for n in range(max(data_slider.get()-MAX_LIST_SIZE, 0), data_slider.get()):
+			view_yList.append(saved_yList[n])
+		a.plot(xList, view_yList)
+
+	else:
+		if (ser.inWaiting() > 0):
+			line = ser.readline()
+			dataFile.write(line.decode("utf-8"))
+			yList.append(float(line))
+			if (len(yList) > MAX_LIST_SIZE):
+				yList.pop(0)
+
+
+			global num_samples
+			num_samples += 1;
+			xList = list(range(max(num_samples-MAX_LIST_SIZE, 0), num_samples))
+			a.clear()
+			a.plot(xList, yList)
+			data_slider.config(from_=min(num_samples, MAX_LIST_SIZE), to=num_samples)
+			data_slider.set(num_samples)
 
 canvas = FigureCanvasTkAgg(f, root)
 canvas.draw()
