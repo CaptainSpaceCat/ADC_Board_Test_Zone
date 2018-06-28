@@ -333,6 +333,8 @@ void readData1(bool showHex, int scalar) { //read the ADC data when STATUS and C
     decVal = float(rawData)*LSBsize*scalar; //then just multiply by LSBsize
   }
 //  Serial.print("Voltage (V): ");
+  Serial.print(millis());
+  Serial.print(",");
   Serial.println(decVal, DEC);
 }
 
