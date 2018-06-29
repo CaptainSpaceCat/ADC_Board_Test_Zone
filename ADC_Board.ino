@@ -27,7 +27,11 @@ bool showHex = true;
 /*------------------------------------------------*/
 /*------------------------------------------------*/
 bool active = false;
+bool current_spinning_mode = false;
 
+byte data_filter_chop_reg = 0x17;
+byte vbias_reg = 0x0;
+byte gain_pga_reg = 0x8;
 
 
 
@@ -102,17 +106,48 @@ void setup() {
 /*------------------------------------------------*/
 /*------------------------------------------------*/
 void loop() {  
-  
-  for (int j=1; j<=100000; j++){
-    if (Serial.available() > 0) {
-      handleCommand();
-    }
-
+  if (Serial.available() > 0) {
+    handleCommand();
+  }
+  if (!current_spinning_mode) {
     if (active) {
-      readData1(showHex = false, 1000);
+      readData1(showHex = false, 1000, true);
     }
     delay(75);
+  } else {
+    hallSpin();
   }
+}
+
+
+void hallSpin() {
+  /* HALL SPIN -- A --*/
+  float rDataA = 0;
+  writeReg(0x42, 0x60); 
+  delay(5);
+  writeReg(0x48, 0x08); 
+  delay(5);
+  IDAC(true, 0x04, 0xF2); 
+//  delay(50);
+//  SFOCAL();
+  delay(20);
+  rDataA = readData1(showHex = false, 1, false);
+ 
+ /* HALL SPIN -- B --*/
+  float rDataB = 0;
+  writeReg(0x42, 0x23); 
+  delay(5);
+  writeReg(0x48, 0x01); 
+  delay(20);
+  IDAC(true, 0x04, 0xF6); 
+//  delay(50);
+//  SFOCAL();
+  delay(5);
+  rDataB = readData1(showHex = false, 1, false);
+  float dataSpin = (rDataA-rDataB)*1;
+  Serial.print(millis());
+  Serial.print(",");
+  Serial.println(dataSpin, DEC);
 }
 /*------------------------------------------------*/
 
@@ -125,7 +160,7 @@ void handleCommand() {
   }
   message = message.substring(0, message.length() - 2);
   //Serial.println(message);
-  String argv[6];
+  String argv[7];
   parseMessage(message, argv);
 
   if (argv[0] == "test") {
@@ -146,6 +181,62 @@ void handleCommand() {
     setDataRate(argv[1].toInt());
   } else if (argv[0] == "setgain") {
     setGain(argv[1].toInt());
+  } else if (argv[0] == "setidacpins") {
+    int a, b, c;
+    if (argv[1] == "Off") {
+      a = -1;
+    } else {
+      a = argv[1].toInt();
+    }
+    if (argv[2] == "Off") {
+      b = -1;
+    } else {
+      b = argv[2].toInt();
+    }
+    if (argv[3] == "Off") {
+      c = 0;
+    } else {
+      c = argv[3].toInt();
+    }
+    setIDAC(a, b, c);
+  } else if (argv[0] == "setpga") {
+    Serial.println(argv[1]);
+    if (argv[1] == "Bypassed") {
+      setPGA(0);
+    } else if (argv[1] == "IP_Buffer_Bypassed") {
+      setPGA(2);
+    } else {
+      setPGA(1);
+    }
+  } else if (argv[0] == "setfilter") {
+    if (argv[1] == "SINC3") {
+      setFilter(false);
+    } else {
+      setFilter(true);
+    }
+  } else if (argv[0] == "setchop") {
+    if (argv[1] == "On") {
+      setChop(true);
+    } else {
+      setChop(false);
+    }
+  } else if (argv[0] == "setvbias") {
+    if (argv[1] == "Supply/12") {
+      vbias_reg |= 0x80;
+    } else {
+      vbias_reg &= 0x7f;
+    }
+    writeReg(0x48, vbias_reg);
+  } else if (argv[0] == "setvbiaspins") {
+    setVbiasPins(argv[1].toInt(), argv[2].toInt(), argv[3].toInt(), argv[4].toInt(), argv[5].toInt(), argv[6].toInt());
+  } else if (argv[0] == "setreadmode") {
+    if (argv[1] == "currentspin") {
+      current_spinning_mode = false;
+    } else {
+      current_spinning_mode = true;
+    }
+  } else if (argv[0] == "setcspins") {
+    
   }
 }
 
@@ -196,9 +287,85 @@ void setDataRate(int sps) {
     val = 0x1d;
   }
 
-  val |= 16;
-  writeReg(0x44, val);
+  data_filter_chop_reg &= 0xf0;
+  data_filter_chop_reg |= val;
+  writeReg(0x44, data_filter_chop_reg);
   //regReadout();
+}
+
+void setChop(bool c) {
+  if (c) {
+    data_filter_chop_reg |= 0x80;
+  } else {
+    data_filter_chop_reg &= 0x7f;
+  }
+  writeReg(0x44, data_filter_chop_reg);
+}
+
+void setFilter(bool latency) {
+  if (latency) {
+    data_filter_chop_reg |= 0x10;
+  } else {
+    data_filter_chop_reg &= 0xef;
+  }
+  writeReg(0x44, data_filter_chop_reg);
+}
+
+void setVbiasPins(int a, int b, int c, int d, int e, int f) {
+  byte val = 0x0;
+  val |= (a | (b << 1) | (c << 2) | (d << 3) | (e << 4) | (f << 5));
+  Serial.println(val);
+  vbias_reg &= 0x80;
+  vbias_reg |= val;
+  writeReg(0x48, vbias_reg);
+}
+
+void setIDAC(int a, int b, int c) {
+  int AINx, AINy;
+    if (a == -1) {
+      AINx = 15;
+    } else {
+      AINx = a;
+    }
+    if (b == -1) {
+      AINy = 15;
+    } else {
+      AINy = b;
+    }
+    
+    byte val;
+    val |= AINy;
+    val |= (AINx << 4);
+    writeReg(0x47, val);
+    
+    val = 0x0;
+    if (c == 10) {
+      val = 0x1;
+    } else if (c == 50) {
+      val = 0x2;
+    } else if (c == 100) {
+      val = 0x3;
+    } else if (c == 250) {
+      val = 0x4;
+    } else if (c == 500) {
+      val = 0x5;
+    } else if (c == 750) {
+      val = 0x6;
+    } else if (c == 1000) {
+      val = 0x7;
+    } else if (c == 1500) {
+      val = 0x8;
+    } else if (c == 2000) {
+      val = 0x9;
+    }
+    
+    writeReg(0x46, val);
+}
+
+void setPGA(int mode) {
+  gain_pga_reg &= 0xe7;
+  gain_pga_reg |= (mode << 3);
+  writeReg(0x43, gain_pga_reg);
 }
 
 void setGain(int g) {
@@ -230,8 +397,9 @@ void setGain(int g) {
       break;
   }
 
-  val |= 8;
-  writeReg(0x43, val);
+  gain_pga_reg &= 0xf8;
+  gain_pga_reg |= val;
+  writeReg(0x43, gain_pga_reg);
 }
 
 void setInputMUX(int AINx, int AINy) {
@@ -275,7 +443,7 @@ void IDAC(bool setIDAC, byte valIDAC, byte pinIDAC){
     SPI.transfer(pinIDAC);   //set register to specified value
     delay(1);
     digitalWrite(chipSelectPin, HIGH); 
-    Serial.println("---IDAC ENABLED----"); 
+    //Serial.println("---IDAC ENABLED----"); 
     }
   else{
     digitalWrite(chipSelectPin, LOW);
@@ -285,7 +453,7 @@ void IDAC(bool setIDAC, byte valIDAC, byte pinIDAC){
     SPI.transfer(0xFF);   //set 0x47 register to DISCONNECT all IDAC pins
     delay(1);
     digitalWrite(chipSelectPin, HIGH);
-    Serial.println("---IDAC DISABLED----"); 
+    //Serial.println("---IDAC DISABLED----"); 
     }
 }
 
@@ -302,7 +470,7 @@ void resetADC() {
 }
 
 /*Read 24 bit data from ADC --- WORKING ---*/
-void readData1(bool showHex, int scalar) { //read the ADC data when STATUS and CRC bits are NOT enabled
+float readData1(bool showHex, int scalar, bool printData) { //read the ADC data when STATUS and CRC bits are NOT enabled
 //  Serial.print("Data Read: ");
   float decVal = 0;
   /*Read the three bytes of 2's complement data from the ADC*/ 
@@ -333,9 +501,12 @@ void readData1(bool showHex, int scalar) { //read the ADC data when STATUS and C
     decVal = float(rawData)*LSBsize*scalar; //then just multiply by LSBsize
   }
 //  Serial.print("Voltage (V): ");
-  Serial.print(millis());
-  Serial.print(",");
-  Serial.println(decVal, DEC);
+  if (printData) {
+    Serial.print(millis());
+    Serial.print(",");
+    Serial.println(decVal, DEC);
+  }
+  return decVal;
 }
 
 
@@ -348,9 +519,9 @@ void readTemp() {
     SPI.transfer(0x50); //internal temp ON
     delay(1);
     digitalWrite(chipSelectPin, HIGH);
-    readData1(showHex = true, 1); 
+    readData1(showHex = true, 1, true); 
     delay(10);
-    readData1(showHex = true, 1);
+    readData1(showHex = true, 1, true);
     digitalWrite(chipSelectPin, LOW);
     SPI.transfer(0x49); //temperature readout register
     SPI.transfer(0x00); //
